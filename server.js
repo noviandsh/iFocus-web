@@ -4,16 +4,19 @@ const { join } = require('node:path');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose')
 
+// inisialisasi
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
     connectionStateRecovery: {}
 });
 
+// connect mongoose
 mongoose.connect('mongodb://127.0.0.1:27017/ifocus')
     .then(() => console.log("Connected to MongoDB"))
     .catch(err => console.error("Could not connect to MongoDB", err));
 
+// create schema``
 const userSchema = new mongoose.Schema({
     name: String,
     online: Number,
@@ -25,6 +28,8 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('pc', userSchema);
 
+const changeStream = User.watch()
+
 const getUsers = async () => {
     const users = await User.find({ name: 'PC01' });
     return users
@@ -33,6 +38,7 @@ const getUsers = async () => {
 // console.log(getUsers().then(data => { return data }));
 // getUsers()
 
+app.use(express.static(__dirname + '/public'));
 app.set('view engine', 'ejs');
 
 app.get('/', async (req, res) => {
@@ -40,16 +46,46 @@ app.get('/', async (req, res) => {
     res.render('index', { data })
 });
 
+app.get('/block', async (req, res) => {
+    const name = req.query.name
+    const value = 1 - req.query.value
+
+    const updatedItem = await User.findOneAndUpdate({ name: name }, { block: value })
+
+    res.redirect('/')
+})
+app.get('/choosen', async (req, res) => {
+    const name = req.query.name
+    const value = 1 - req.query.value
+
+    const updatedItem = await User.findOneAndUpdate({ name: name }, { choosen: value })
+
+    res.redirect('/')
+})
+
 io.on('connection', (socket) => {
     console.log('an user connected');
 
-    socket.on('chat message', (msg) => {
-        console.log('message: ' + msg);
-        io.emit('chat message', msg)
-    })
-    socket.on('disconnected', () => {
+    socket.on('disconnect', () => {
         console.log('a user disconnected');
+        io.removeAllListeners();
     })
+
+    changeStream
+        .on("change", async (change) => {
+            if (change.operationType == 'update') {
+                const data = await User.findById(change.documentKey._id);
+                const name = data.name
+                const updatedItem = change.updateDescription.updatedFields
+                io.emit("dataUpdate", { name: name, change: updatedItem })
+            } else if (change.operationType == "insert") {
+                const document = change.fullDocument
+                io.emit("newDocument", document)
+            } else if (change.operationType == "delete") {
+                const id = change.documentKey._id
+                io.emit("deleteDocument", id)
+            }
+        })
 });
 
 // main().catch(err => console.log("error: ", err))
